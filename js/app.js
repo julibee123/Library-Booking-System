@@ -1956,6 +1956,12 @@ function openChangeInstructorModal(facilitators = [], currentFacilitatorId = nul
             const modalResult = await promptCompletionEvaluation();
             if (modalResult === null) return;
             evaluationNotes = modalResult.message;
+        } else if (normalizedStatus === 'CONFIRMED') {
+            if (typeof window.promptConfirmedNote === 'function') {
+                const modalResult = await window.promptConfirmedNote();
+                if (modalResult === null) return;
+                evaluationNotes = modalResult.message;
+            }
         } else if (normalizedStatus === 'CANCELLED' || normalizedStatus === 'DECLINED') {
             const actionWord = normalizedStatus === 'DECLINED' ? 'declined' : 'cancelled';
             const reasonInput = await openCancellationReasonModal({

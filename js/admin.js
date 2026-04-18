@@ -1108,11 +1108,28 @@ window.promptCancellationReason = function ({
     reasonEl.value = '';
     reasonEl.placeholder = reasonPlaceholder;
 
+    const defaultConfirmText = confirmBtn.textContent;
+    let loading = false;
+
+    function setLoading(isLoading) {
+        loading = Boolean(isLoading);
+        reasonEl.disabled = loading;
+        closeBtn.disabled = loading;
+        confirmBtn.disabled = loading;
+        confirmBtn.innerHTML = loading
+            ? '<span class="prompt-spinner" aria-hidden="true"></span><span>Saving...</span>'
+            : confirmText;
+    }
+
+    function closeModal() {
+        cleanup();
+    }
+
     return new Promise(resolve => {
         const onConfirm = () => {
             const val = reasonEl.value.trim();
-            cleanup();
-            resolve(val);
+            setLoading(true);
+            resolve({ message: val, setLoading, close: closeModal });
         };
 
         const onClose = () => {
@@ -1121,11 +1138,11 @@ window.promptCancellationReason = function ({
         };
 
         const onBackdrop = (e) => {
-            if (e.target === modal) onClose();
+            if (!loading && e.target === modal) onClose();
         };
 
         const onEsc = (e) => {
-            if (e.key === 'Escape') onClose();
+            if (!loading && e.key === 'Escape') onClose();
         };
 
         function cleanup() {
@@ -1134,6 +1151,8 @@ window.promptCancellationReason = function ({
             closeBtn.removeEventListener('click', onClose);
             modal.removeEventListener('click', onBackdrop);
             document.removeEventListener('keydown', onEsc);
+            setLoading(false);
+            confirmBtn.textContent = defaultConfirmText;
         }
 
         confirmBtn.addEventListener('click', onConfirm);

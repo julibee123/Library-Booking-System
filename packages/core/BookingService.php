@@ -214,9 +214,17 @@ class BookingService {
         try {
             $parsed = $this->parseLegacySpecialRequests($specialRequests);
 
+            $requesterDepartmentId = null;
+            if (!empty($parsed['department'])) {
+                $deptStmt = $this->db->prepare('SELECT id FROM department WHERE LOWER(name) = LOWER(?) LIMIT 1');
+                $deptStmt->execute([trim((string) $parsed['department'])]);
+                $deptRow = $deptStmt->fetch(PDO::FETCH_ASSOC);
+                $requesterDepartmentId = $deptRow['id'] ?? null;
+            }
+
             $stmt = $this->db->prepare("UPDATE sessions
                 SET status = 'CONFIRMED', user_id = ?, special_requests = ?,
-                    requester_name = ?, requester_email = ?, requester_department = ?,
+                    requester_name = ?, requester_email = ?, requester_department_id = ?,
                     notification_minutes = ?
                 WHERE id = ?");
             $stmt->execute([
@@ -224,7 +232,7 @@ class BookingService {
                 $specialRequests,
                 $parsed['name'],
                 $parsed['email'],
-                $parsed['department'],
+                $requesterDepartmentId,
                 $parsed['reminder'],
                 $sessionId
             ]);
@@ -233,6 +241,7 @@ class BookingService {
             return true;
         } catch (Exception $e) {
             $this->db->rollBack();
+            error_log('confirmBooking failed: ' . $e->getMessage());
             return false;
         }
     }
@@ -430,6 +439,8 @@ class BookingService {
     public function createAdvancedBooking($type, $facilitatorId, $topic, $dateTime, $endTime, $mode, $userId, $requestDetails = [], $customRequestor = null)
     {
         $this->db->beginTransaction();
+        $effectiveUserId = null;
+        $sessionId = null;
         try {
             $startTimestamp = strtotime((string) $dateTime);
             if ($startTimestamp === false) {
@@ -467,7 +478,6 @@ class BookingService {
                 $requesterDepartmentId = !empty($customRequestor['dept_id']) ? (int) $customRequestor['dept_id'] : $requesterDepartmentId;
             }
 
-            $effectiveUserId = null;
             if ($isFacilitatorBooking) {
                 // Facilitators must explicitly provide requester details; never default to facilitator profile.
                 if ($requesterName === '' || $requesterEmail === '' || empty($requesterDepartmentId)) {
@@ -515,15 +525,24 @@ class BookingService {
             $sessionId = $this->db->lastInsertId();
             $this->logSessionEvent((int) $sessionId, 'created');
             $this->db->commit();
-
-            if ($effectiveUserId) {
-                NotificationWorker::sendConfirmation($effectiveUserId, $sessionId, $mode);
-            }
-            return true;
         } catch (Exception $e) {
-            $this->db->rollBack();
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            error_log('createAdvancedBooking failed: ' . $e->getMessage());
             return false;
         }
+
+        // Notification should not break booking success after commit.
+        if ($effectiveUserId) {
+            try {
+                NotificationWorker::sendConfirmation($effectiveUserId, $sessionId, $mode);
+            } catch (Throwable $notifyError) {
+                error_log('createAdvancedBooking notification failed: ' . $notifyError->getMessage());
+            }
+        }
+
+        return true;
     }
 
     public function getAppointments($userId, $isAdmin = false, $facilitatorId = null) {
@@ -568,23 +587,40 @@ class BookingService {
             $normalizedStatus = strtoupper((string) $status);
             $isClosedStatus = in_array($normalizedStatus, ['CANCELLED', 'DECLINED'], true);
             $isCompletedStatus = $normalizedStatus === 'COMPLETED';
+            $isConfirmedStatus = $normalizedStatus === 'CONFIRMED';
             $reasonToSave = $isClosedStatus ? trim((string) ($cancellationReason ?? '')) : null;
             $cancelledAt = $isClosedStatus ? date('Y-m-d H:i:s') : null;
             $cancelledByValue = $isClosedStatus ? $cancelledBy : null;
-            $notesToSave = ($isCompletedStatus && $evaluationNotes) ? trim((string) $evaluationNotes) : null;
+            $notesToSave = ($isCompletedStatus || $isConfirmedStatus) ? trim((string) ($evaluationNotes ?? '')) : null;
 
             $stmt = $this->db->prepare("UPDATE sessions SET status = ?, venue = ?, facilitator_id = ?, cancellation_reason = ?, cancelled_date_time = ?, cancelled_by = ?, evaluation_notes = ? WHERE id = ?");
             $stmt->execute([$normalizedStatus, $venue, $facId, ($reasonToSave !== '' ? $reasonToSave : null), $cancelledAt, $cancelledByValue, ($notesToSave !== '' ? $notesToSave : null), $sessionId]);
-            if ($stmt->rowCount() > 0) {
+            $hasChanges = $stmt->rowCount() > 0;
+            if ($hasChanges) {
                 $this->logSessionEvent((int) $sessionId, 'modified');
             }
-            
+
             $this->db->commit();
-            return true;
         } catch (Exception $e) {
             $this->db->rollBack();
             return false;
         }
+
+        if ($hasChanges) {
+            try {
+                NotificationWorker::sendAppointmentUpdate(
+                    (int) $sessionId,
+                    $normalizedStatus,
+                    $cancelledByValue,
+                    ($reasonToSave !== '' ? $reasonToSave : null),
+                    ($notesToSave !== '' ? $notesToSave : null)
+                );
+            } catch (Throwable $notifyError) {
+                error_log('updateAppointment notification failed: ' . $notifyError->getMessage());
+            }
+        }
+
+        return true;
     }
 
     public function cancelAppointment($sessionId, $cancellationReason = null, $cancelledBy = null) {
@@ -594,15 +630,31 @@ class BookingService {
             $cancelledAt = date('Y-m-d H:i:s');
             $stmt = $this->db->prepare("UPDATE sessions SET status = 'CANCELLED', cancellation_reason = ?, cancelled_date_time = ?, cancelled_by = ? WHERE id = ?");
             $success = $stmt->execute([($reason !== '' ? $reason : null), $cancelledAt, $cancelledBy, $sessionId]);
-            if ($success && $stmt->rowCount() > 0) {
+            $hasChanges = $success && $stmt->rowCount() > 0;
+            if ($hasChanges) {
                 $this->logSessionEvent((int) $sessionId, 'modified');
             }
             $this->db->commit();
-            return $success;
         } catch (Exception $e) {
             $this->db->rollBack();
             return false;
         }
+
+        if ($hasChanges) {
+            try {
+                NotificationWorker::sendAppointmentUpdate(
+                    (int) $sessionId,
+                    'CANCELLED',
+                    $cancelledBy,
+                    ($reason !== '' ? $reason : null),
+                    null
+                );
+            } catch (Throwable $notifyError) {
+                error_log('cancelAppointment notification failed: ' . $notifyError->getMessage());
+            }
+        }
+
+        return $success;
     }
 
     public function changeInstructorToTba($sessionId, $facilitatorId = null) {

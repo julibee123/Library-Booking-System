@@ -48,15 +48,15 @@
 <div class="modal-overlay admin-modal" id="completion-evaluation-modal">
     <div class="modal-content admin-modal-card admin-modal-sm">
         <div class="modal-header">
-            <h3>Completion Message</h3>
+            <h3 id="appointment-note-title">Completion Message</h3>
             <button class="btn-close" id="completion-eval-close" type="button">&times;</button>
         </div>
         <div class="modal-body">
-            <p style="margin: 0 0 0.85rem 0; color: #475569; font-size: 0.86rem;">
+            <p id="appointment-note-description" style="margin: 0 0 0.85rem 0; color: #475569; font-size: 0.86rem;">
                 Add the completion message for this appointment. This will be used later for evaluation/email workflows.
             </p>
             <div class="form-group">
-                <label for="completion-eval-notes">Message</label>
+                <label id="appointment-note-label" for="completion-eval-notes">Message</label>
                 <textarea id="completion-eval-notes" class="form-control" rows="5" placeholder="Enter completion message for later evaluation/email use..."></textarea>
             </div>
             <div class="admin-modal-footer">
@@ -70,16 +70,31 @@
 <script>
 window.adminAppointmentLocked = false;
 
-window.promptCompletionEvaluation = function () {
+window.promptAppointmentNote = function (options = {}) {
     const modal = document.getElementById('completion-evaluation-modal');
+    const titleEl = document.getElementById('appointment-note-title');
+    const descEl = document.getElementById('appointment-note-description');
+    const labelEl = document.getElementById('appointment-note-label');
     const notesEl = document.getElementById('completion-eval-notes');
     const closeBtn = document.getElementById('completion-eval-close');
     const cancelBtn = document.getElementById('completion-eval-cancel');
     const confirmBtn = document.getElementById('completion-eval-confirm');
 
-    if (!modal || !notesEl || !closeBtn || !cancelBtn || !confirmBtn) {
+    if (!modal || !titleEl || !descEl || !labelEl || !notesEl || !closeBtn || !cancelBtn || !confirmBtn) {
         return Promise.resolve(null);
     }
+
+    const title = options.title || 'Appointment Note';
+    const description = options.description || 'Add a note for this appointment update.';
+    const label = options.label || 'Note';
+    const placeholder = options.placeholder || 'Enter note...';
+    const confirmText = options.confirmText || 'Save';
+
+    titleEl.textContent = title;
+    descEl.textContent = description;
+    labelEl.textContent = label;
+    notesEl.placeholder = placeholder;
+    confirmBtn.textContent = confirmText;
 
     notesEl.value = '';
 
@@ -124,6 +139,26 @@ window.promptCompletionEvaluation = function () {
         document.addEventListener('keydown', onEsc);
         modal.classList.add('active');
         notesEl.focus();
+    });
+};
+
+window.promptCompletionEvaluation = function () {
+    return window.promptAppointmentNote({
+        title: 'Completion Message',
+        description: 'Add the completion message for this appointment. This will be used for the completion email and evaluation workflows.',
+        label: 'Message',
+        placeholder: 'Enter completion message for email/evaluation...',
+        confirmText: 'Save & Complete'
+    });
+};
+
+window.promptConfirmedNote = function () {
+    return window.promptAppointmentNote({
+        title: 'Confirmation Note',
+        description: 'Add a short note that will be included in the confirmation email to the user.',
+        label: 'Confirmed Note',
+        placeholder: 'Enter confirmation note from admin...',
+        confirmText: 'Save & Confirm'
     });
 };
 
@@ -208,17 +243,50 @@ async function saveAdminAppointment() {
         return;
     }
 
+    const modal = document.getElementById('admin-appointment-modal');
+    const saveBtn = document.querySelector('#admin-app-form button[onclick="saveAdminAppointment()"]');
+    const form = document.getElementById('admin-app-form');
+    const statusEl = document.getElementById('admin-app-status');
+    const venueEl = document.getElementById('admin-app-venue');
+    const facEl = document.getElementById('admin-app-facilitator');
+    let isSaving = false;
+
+    const setSavingState = (saving) => {
+        isSaving = Boolean(saving);
+        if (statusEl) statusEl.disabled = saving;
+        if (venueEl) venueEl.disabled = saving;
+        if (facEl) facEl.disabled = saving;
+        if (saveBtn) {
+            saveBtn.disabled = saving;
+            saveBtn.innerHTML = saving
+                ? '<span class="prompt-spinner" aria-hidden="true"></span><span>Processing...</span>'
+                : 'Save Changes';
+            saveBtn.style.opacity = saving ? '0.7' : '1';
+            saveBtn.style.cursor = saving ? 'wait' : 'pointer';
+        }
+        if (form) {
+            form.style.pointerEvents = saving ? 'none' : '';
+        }
+    };
+
     const status = document.getElementById('admin-app-status').value;
     let cancellationReason = null;
     let cancelledBy = null;
+    let promptResult = null;
 
     const normalizedStatus = String(status).toUpperCase();
 
-    let evaluationData = null;
     if (normalizedStatus === 'COMPLETED') {
         if (typeof window.promptCompletionEvaluation === 'function') {
-            evaluationData = await window.promptCompletionEvaluation();
-            if (evaluationData === null) return;
+            promptResult = await window.promptCompletionEvaluation();
+            if (promptResult === null) return;
+        } else {
+            return;
+        }
+    } else if (normalizedStatus === 'CONFIRMED') {
+        if (typeof window.promptConfirmedNote === 'function') {
+            promptResult = await window.promptConfirmedNote();
+            if (promptResult === null) return;
         } else {
             return;
         }
@@ -227,7 +295,7 @@ async function saveAdminAppointment() {
     if (normalizedStatus === 'CANCELLED' || normalizedStatus === 'DECLINED') {
         if (typeof window.promptCancellationReason === 'function') {
             const isDecline = normalizedStatus === 'DECLINED';
-            const input = await window.promptCancellationReason({
+            promptResult = await window.promptCancellationReason({
                 title: isDecline ? 'Decline This Appointment?' : 'Cancel This Appointment?',
                 message: isDecline
                     ? 'You can optionally provide a decline reason before proceeding.'
@@ -239,8 +307,11 @@ async function saveAdminAppointment() {
                     ? 'Type a reason for declining, or leave blank to continue...'
                     : 'Type a reason for cancellation, or leave blank to continue...'
             });
-            if (input === null) return;
-            cancellationReason = input;
+            if (promptResult === null) return;
+            cancellationReason = promptResult.message;
+            if (typeof promptResult.setLoading === 'function') {
+                promptResult.setLoading(true);
+            }
         } else {
             return;
         }
@@ -255,18 +326,33 @@ async function saveAdminAppointment() {
         cancellation_reason: cancellationReason,
         cancelled_by: cancelledBy,
         evaluation_rating: null,
-        evaluation_notes: evaluationData ? evaluationData.message : null
+        evaluation_notes: promptResult ? promptResult.message : null
     };
     
     try {
+        setSavingState(true);
         const res = await fetch('api.php?action=update_appointment', {
             method: 'POST',
             body: JSON.stringify(payload)
         });
-        if ((await res.json()).success) {
+        const data = await res.json();
+        if (data.success) {
+            if (typeof promptResult?.close === 'function') {
+                promptResult.close();
+            }
             document.getElementById('admin-appointment-modal').classList.remove('active');
             loadRequests();
+        } else {
+            if (typeof promptResult?.setLoading === 'function') {
+                promptResult.setLoading(false);
+            }
+            setSavingState(false);
         }
-    } catch (e) {}
+    } catch (e) {
+        if (typeof promptResult?.setLoading === 'function') {
+            promptResult.setLoading(false);
+        }
+        setSavingState(false);
+    }
 }
 </script>

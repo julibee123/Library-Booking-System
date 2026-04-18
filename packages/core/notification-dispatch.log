@@ -118,3 +118,9 @@
      Modality: Onsite
      Data: Location: Main Library, Conference Room A
 ---------------------------------------------------------
+[2026-04-18 09:16:16] Email FAILED for manalo.jullian@student.auf.edu.ph | Subject: Appointment Update: CONFIRMED | Error: SMTP Error: Could not authenticate.
+[2026-04-18 09:18:45] Email FAILED for julliancmanalo@gmail.com | Subject: Appointment Update: CONFIRMED | Error: SMTP Error: Could not authenticate.
+[2026-04-18 09:25:04] Email FAILED for julliancmanalo@gmail.com | Subject: Appointment Update: CANCELLED | Error: SMTP Error: Could not authenticate.
+[2026-04-18 09:26:23] Email FAILED for manalo.jullian@student.auf.edu.ph | Subject: Library Appointment Confirmation | Error: SMTP Error: Could not authenticate.
+[2026-04-18 09:26:57] Email FAILED for manalo.jullian@student.auf.edu.ph | Subject: Appointment Update: CONFIRMED | Error: SMTP Error: Could not authenticate.
+[2026-04-18 09:28:34] Email sent to manalo.jullian@student.auf.edu.ph | Subject: Appointment Update: COMPLETED

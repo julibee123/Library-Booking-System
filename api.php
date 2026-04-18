@@ -441,6 +441,9 @@ if ($action === 'delete_facilitator') {
 
 if ($action === 'advanced_booking') {
     $data = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($data)) {
+        $data = [];
+    }
     $type = $data['type'] ?? 'Consultation';
     $fid = $data['facilitator_id'] ?? 0;
     $dt = $data['date_time'] ?? '';
@@ -466,8 +469,12 @@ if ($action === 'advanced_booking') {
         'reminder' => $reminder
     ];
 
-    $success = $service->createAdvancedBooking($type, $fid, $topic, $dt, $et, $mode, $userId, $requestDetails, $customRequestor);
-    echo json_encode(['success' => $success]);
+    try {
+        $success = $service->createAdvancedBooking($type, $fid, $topic, $dt, $et, $mode, $userId, $requestDetails, $customRequestor);
+        echo json_encode(['success' => $success]);
+    } catch (Throwable $e) {
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
     exit;
 }
 
