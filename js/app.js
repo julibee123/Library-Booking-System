@@ -1,5 +1,18 @@
 document.addEventListener('DOMContentLoaded', () => {
 
+    function formatLocalDate(date) {
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+    }
+
+    function parseLocalDate(dateStr) {
+        if (!dateStr) return new Date();
+        const [y, m, d] = dateStr.split('-').map(Number);
+        return new Date(y, m - 1, d);
+    }
+
     const grid = document.getElementById('sessions-grid');
     const refreshBtn = document.getElementById('refresh-btn');
 
@@ -19,6 +32,35 @@ document.addEventListener('DOMContentLoaded', () => {
     let scrollTimeout = null;
     let clickTimer = null;
     let selectedFacId = null;
+    let currentUser = null;
+    let allDepartments = [];
+
+    async function initUserContext() {
+        try {
+            const res = await fetch('api.php?action=get_user_info');
+            const data = await res.json();
+            if (data.success) {
+                currentUser = data.user;
+            }
+        } catch (e) {
+            console.error("Failed to load user info:", e);
+        }
+    }
+
+    async function loadAllDepartments() {
+        try {
+            const res = await fetch('api.php?action=get_departments');
+            const data = await res.json();
+            if (data.success) {
+                allDepartments = data.departments;
+            }
+        } catch (e) {
+            console.error("Failed to load departments:", e);
+        }
+    }
+
+    initUserContext();
+    loadAllDepartments();
 
 
     if (avatarBtn && userSidebar) {
@@ -26,6 +68,159 @@ document.addEventListener('DOMContentLoaded', () => {
             e.stopPropagation();
             userSidebar.classList.toggle('active');
         });
+
+function openCancellationReasonModal({
+    title = 'Cancel Appointment',
+    message = 'You may optionally provide a reason before confirming cancellation.',
+    confirmText = 'Confirm Cancellation',
+    cancelText = 'Keep Appointment',
+    reasonLabel = 'Cancellation reason (optional)',
+    reasonPlaceholder = 'Type a reason, or leave blank to continue...'
+} = {}) {
+    const modal = document.getElementById('cancel-reason-modal');
+    const titleEl = document.getElementById('cancel-reason-title');
+    const messageEl = document.getElementById('cancel-reason-message');
+    const reasonLabelEl = document.getElementById('cancel-reason-label');
+    const reasonEl = document.getElementById('cancel-reason-input');
+    const closeBtn = document.getElementById('cancel-reason-close');
+    const confirmBtn = document.getElementById('cancel-reason-confirm');
+
+    // If modal is unavailable, safely abort instead of using native browser dialogs.
+    if (!modal || !reasonEl || !closeBtn || !confirmBtn) {
+        console.warn('Cancellation modal is not available in DOM.');
+        return Promise.resolve(null);
+    }
+
+    if (titleEl) titleEl.textContent = title;
+    if (messageEl) messageEl.textContent = message;
+    if (reasonLabelEl) reasonLabelEl.textContent = reasonLabel;
+    closeBtn.textContent = cancelText;
+    confirmBtn.textContent = confirmText;
+    reasonEl.value = '';
+    reasonEl.placeholder = reasonPlaceholder;
+
+    return new Promise(resolve => {
+        const onConfirm = () => {
+            const val = reasonEl.value.trim();
+            cleanup();
+            resolve(val);
+        };
+
+        const onClose = () => {
+            cleanup();
+            resolve(null);
+        };
+
+        const onBackdrop = (e) => {
+            if (e.target === modal) onClose();
+        };
+
+        const onEsc = (e) => {
+            if (e.key === 'Escape') onClose();
+        };
+
+        function cleanup() {
+            modal.classList.remove('active');
+            confirmBtn.removeEventListener('click', onConfirm);
+            closeBtn.removeEventListener('click', onClose);
+            modal.removeEventListener('click', onBackdrop);
+            document.removeEventListener('keydown', onEsc);
+        }
+
+        confirmBtn.addEventListener('click', onConfirm);
+        closeBtn.addEventListener('click', onClose);
+        modal.addEventListener('click', onBackdrop);
+        document.addEventListener('keydown', onEsc);
+        modal.classList.add('active');
+        reasonEl.focus();
+    });
+}
+
+function openChangeInstructorModal(facilitators = [], currentFacilitatorId = null) {
+    const modal = document.getElementById('change-instructor-modal');
+    const listEl = document.getElementById('change-instructor-list');
+    const closeBtn = document.getElementById('change-instructor-close');
+    const confirmBtn = document.getElementById('change-instructor-confirm');
+    let selectedFacilitatorId = null;
+
+    if (!modal || !listEl || !closeBtn || !confirmBtn) {
+        console.warn('Change instructor modal is not available in DOM.');
+        return Promise.resolve(null);
+    }
+
+    listEl.innerHTML = '';
+    if (!facilitators.length) {
+        listEl.innerHTML = '<div class="loader-container">No available facilitators for this topic.</div>';
+    } else {
+        facilitators.forEach(f => {
+            const card = document.createElement('div');
+            card.className = 'fac-card-new';
+            card.innerHTML = `
+                <div class="fac-avatar-new">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                </div>
+                <div class="fac-info-new">
+                    <h5>${f.name}</h5>
+                    <p>${f.position || 'Library Faculty'}</p>
+                </div>
+            `;
+
+            card.addEventListener('click', () => {
+                listEl.querySelectorAll('.fac-card-new').forEach(c => c.classList.remove('selected'));
+                card.classList.add('selected');
+                selectedFacilitatorId = String(f.id);
+            });
+
+            if (currentFacilitatorId && String(f.id) === String(currentFacilitatorId)) {
+                card.classList.add('selected');
+                selectedFacilitatorId = String(f.id);
+            }
+
+            listEl.appendChild(card);
+        });
+    }
+
+    return new Promise(resolve => {
+        const onConfirm = () => {
+            if (!selectedFacilitatorId) {
+                alert('Please select an instructor first.');
+                return;
+            }
+            cleanup();
+            resolve(selectedFacilitatorId);
+        };
+
+        const onClose = () => {
+            cleanup();
+            resolve(null);
+        };
+
+        const onBackdrop = (e) => {
+            if (e.target === modal) onClose();
+        };
+
+        const onEsc = (e) => {
+            if (e.key === 'Escape') onClose();
+        };
+
+        function cleanup() {
+            modal.classList.remove('active');
+            confirmBtn.removeEventListener('click', onConfirm);
+            closeBtn.removeEventListener('click', onClose);
+            modal.removeEventListener('click', onBackdrop);
+            document.removeEventListener('keydown', onEsc);
+        }
+
+        confirmBtn.addEventListener('click', onConfirm);
+        closeBtn.addEventListener('click', onClose);
+        modal.addEventListener('click', onBackdrop);
+        document.addEventListener('keydown', onEsc);
+        modal.classList.add('active');
+        if (listEl.firstElementChild && listEl.firstElementChild.classList.contains('fac-card-new')) {
+            listEl.firstElementChild.focus?.();
+        }
+    });
+}
 
         document.addEventListener('click', (e) => {
             if (userSidebar.classList.contains('active') && !userSidebar.contains(e.target) && e.target !== avatarBtn && !avatarBtn.contains(e.target)) {
@@ -72,6 +267,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     loadAppointments();
                 } else if (targetTab === 'facilitators') {
                     loadFacilitators();
+                } else if (targetTab === 'my-sessions') {
+                    loadFacilitatorSessions();
                 }
             });
         });
@@ -80,8 +277,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Calendar State
     let currentMonth = new Date().getMonth();
     let currentYear = new Date().getFullYear();
-    let selectedDate = new Date().toISOString().split('T')[0];
+    let selectedDate = formatLocalDate(new Date());
     let allSessions = [];
+    let allOffDays = [];
     let isMonthView = false; // Start with Week view as requested
 
     const monthDisplay = document.getElementById('calendar-month-year');
@@ -102,9 +300,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     currentYear--;
                 }
             } else {
-                const date = new Date(selectedDate);
+                const date = parseLocalDate(selectedDate);
                 date.setDate(date.getDate() - 7);
-                selectedDate = date.toISOString().split('T')[0];
+                selectedDate = formatLocalDate(date);
                 currentMonth = date.getMonth();
                 currentYear = date.getFullYear();
             }
@@ -121,9 +319,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     currentYear++;
                 }
             } else {
-                const date = new Date(selectedDate);
+                const date = parseLocalDate(selectedDate);
                 date.setDate(date.getDate() + 7);
-                selectedDate = date.toISOString().split('T')[0];
+                selectedDate = formatLocalDate(date);
                 currentMonth = date.getMonth();
                 currentYear = date.getFullYear();
             }
@@ -136,7 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const now = new Date();
             currentMonth = now.getMonth();
             currentYear = now.getFullYear();
-            selectedDate = now.toISOString().split('T')[0];
+            selectedDate = formatLocalDate(now);
             updateCalendar();
         });
     }
@@ -148,7 +346,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const svg = toggleViewBtn.querySelector('svg');
             const calendarHero = document.querySelector('.calendar-hero');
             const calendarCard = document.querySelector('.calendar-card');
-            
+
             if (isMonthView) {
                 span.textContent = 'Collapse';
                 svg.innerHTML = '<polyline points="17 11 12 6 7 11"></polyline><polyline points="17 18 12 13 7 18"></polyline>';
@@ -174,7 +372,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Ensure selectedDate is within the current month/year context when navigating (Only in month view)
         if (isMonthView) {
-            const selDate = new Date(selectedDate);
+            const selDate = parseLocalDate(selectedDate);
             if (selDate.getMonth() !== currentMonth || selDate.getFullYear() !== currentYear) {
                 selectedDate = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
             }
@@ -182,9 +380,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (allSessions.length === 0 || forceFetch) {
             try {
-                const res = await fetch('api.php?action=get_appointments');
-                const data = await res.json();
-                if (data.success) allSessions = data.appointments;
+                const [appointmentsRes, offDaysRes] = await Promise.all([
+                    fetch('api.php?action=get_appointments'),
+                    fetch('api.php?action=get_off_days')
+                ]);
+
+                const appointmentsData = await appointmentsRes.json();
+                if (appointmentsData.success) allSessions = appointmentsData.appointments;
+
+                const offDaysData = await offDaysRes.json();
+                if (offDaysData.success) allOffDays = offDaysData.off_days || [];
             } catch (e) {
                 console.error("Failed to sync sessions:", e);
             }
@@ -200,9 +405,10 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadPublicSeminars() {
         try {
             const res = await fetch('api.php?action=get_seminars');
+            if (!res.ok) throw new Error('Network response was not ok');
             const data = await res.json();
-            
-            if (data.success && data.seminars.length > 0) {
+
+            if (data.success && data.seminars && data.seminars.length > 0) {
                 allSeminars = data.seminars;
                 const list = document.getElementById('seminars-list');
                 if (list) {
@@ -242,7 +448,7 @@ document.addEventListener('DOMContentLoaded', () => {
         calendarGrid.innerHTML = '';
 
         if (selectedDateLabel) {
-            const date = new Date(selectedDate);
+            const date = parseLocalDate(selectedDate);
             const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
             selectedDateLabel.textContent = `Showing schedule for ${date.toLocaleDateString('en-US', options)}`;
         }
@@ -252,7 +458,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const prevMonthLastDay = new Date(currentYear, currentMonth, 0).getDate();
 
         const today = new Date();
-        today.setHours(0,0,0,0);
+        today.setHours(0, 0, 0, 0);
         const gapDate = new Date(today);
         gapDate.setDate(today.getDate() + 2);
 
@@ -262,17 +468,17 @@ document.addEventListener('DOMContentLoaded', () => {
         for (let i = firstDayOfMonth - 1; i >= 0; i--) {
             const dayNum = prevMonthLastDay - i;
             const date = new Date(currentYear, currentMonth - 1, dayNum);
-            const dateStr = date.toISOString().split('T')[0];
+            const dateStr = formatLocalDate(date);
             const isRestricted = date < gapDate;
             const cell = createCell(dayNum, true, false, dateStr === selectedDate, dateStr, isRestricted);
             cells.push({ cell, dateStr, isRestricted });
         }
 
         // Current month cells
-        const todayStr = new Date().toISOString().split('T')[0];
+        const todayStr = formatLocalDate(new Date());
         for (let i = 1; i <= daysInMonth; i++) {
             const date = new Date(currentYear, currentMonth, i);
-            const dateStr = date.toISOString().split('T')[0];
+            const dateStr = formatLocalDate(date);
             const isRestricted = date < gapDate;
             const cell = createCell(i, false, dateStr === todayStr, dateStr === selectedDate, dateStr, isRestricted);
             cells.push({ cell, dateStr, isRestricted });
@@ -283,7 +489,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const paddingNeeded = 42 - totalUsed;
         for (let i = 1; i <= paddingNeeded; i++) {
             const date = new Date(currentYear, currentMonth + 1, i);
-            const dateStr = date.toISOString().split('T')[0];
+            const dateStr = formatLocalDate(date);
             const isRestricted = date < gapDate;
             const cell = createCell(i, true, false, dateStr === selectedDate, dateStr, isRestricted);
             cells.push({ cell, dateStr, isRestricted });
@@ -291,16 +497,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // If Week View, find the week containing selectedDate
         if (!isMonthView) {
-            const selectedDateObj = new Date(selectedDate);
+            const selectedDateObj = parseLocalDate(selectedDate);
             const dayOfWeek = selectedDateObj.getDay();
             const startOfWeek = new Date(selectedDateObj);
             startOfWeek.setDate(selectedDateObj.getDate() - dayOfWeek);
-            
-            const weekStartStr = startOfWeek.toISOString().split('T')[0];
-            
+
+            const weekStartStr = formatLocalDate(startOfWeek);
+
             // Find the index in our cells array that matches the start of the week
             let startIndex = cells.findIndex(c => c.dateStr === weekStartStr);
-            
+
             if (startIndex !== -1) {
                 cells = cells.slice(startIndex, startIndex + 7);
             } else {
@@ -309,8 +515,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         cells.forEach(({ cell, dateStr, isRestricted }) => {
-            const daySessions = allSessions.filter(s => s.date_time.startsWith(dateStr) && s.booking_status !== 'Cancelled');
+            const daySessions = allSessions.filter(s => s.date_time.startsWith(dateStr) && s.booking_status === 'CONFIRMED');
             const daySeminars = allSeminars.filter(s => s.date_time.startsWith(dateStr));
+            const offDay = allOffDays.find(item => item.date === dateStr);
             const dotContainer = cell.querySelector('.day-content');
 
             if (daySessions.length > 0) {
@@ -324,8 +531,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     count.textContent = `${daySessions.length} slots`;
                     dotContainer.appendChild(count);
                 }
-            } 
-            
+            }
+
             if (daySeminars.length > 0) {
                 const tag = document.createElement('div');
                 tag.className = `seminar-tag`;
@@ -333,10 +540,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 dotContainer.appendChild(tag);
             }
 
-            if (daySessions.length === 0 && daySeminars.length === 0) {
+            if (offDay) {
+                const dot = document.createElement('div');
+                dot.className = 'event-dot dot-offday';
+                dotContainer.appendChild(dot);
+                cell.classList.add('off-day');
+                cell.setAttribute('title', offDay.description ? `Off-day: ${offDay.description}` : 'Off-day');
+            } else if (daySessions.length === 0 && daySeminars.length === 0) {
                 const cellDate = new Date(dateStr);
                 const dayOfWeek = cellDate.getDay();
-                if (dayOfWeek === 0 || dayOfWeek === 6) {
+                if (dayOfWeek === 0) {
                     const dot = document.createElement('div');
                     dot.className = 'event-dot dot-closed';
                     dotContainer.appendChild(dot);
@@ -345,6 +558,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Click listener for date selection
             cell.addEventListener('click', () => {
+                if (offDay) {
+                    showCalendarNotice(offDay.description ? offDay.description : 'This day is unavailable for booking.');
+                    return;
+                }
+
+                const selectedDayOfWeek = parseLocalDate(dateStr).getDay();
+                if (selectedDayOfWeek === 0) {
+                    return;
+                }
+
                 if (isRestricted) {
                     alert('Due to preparation requirements, bookings must be made at least 2 days in advance.');
                     return;
@@ -352,7 +575,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 selectedDate = dateStr;
                 document.querySelectorAll('.calendar-cell').forEach(c => c.classList.remove('selected'));
                 cell.classList.add('selected');
-                
+
                 if (typeof openAdvancedBooking === 'function') {
                     openAdvancedBooking(dateStr);
                 }
@@ -364,13 +587,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function createCell(day, inactive, isToday, isSelected, dateStr, isRestricted) {
         const cell = document.createElement('div');
-        cell.className = `calendar-cell ${inactive ? 'inactive' : ''} ${isToday ? 'today' : ''} ${isSelected ? 'selected' : ''} ${isRestricted ? 'restricted' : ''}`;
+        const isSundayClosed = parseLocalDate(dateStr).getDay() === 0;
+        cell.className = `calendar-cell ${inactive ? 'inactive' : ''} ${isToday ? 'today' : ''} ${isSelected ? 'selected' : ''} ${isRestricted ? 'restricted' : ''} ${isSundayClosed ? 'sunday-closed' : ''}`;
         cell.setAttribute('data-date', dateStr);
         cell.innerHTML = `
             <span class="day-number">${day}</span>
             <div class="day-content"></div>
         `;
         return cell;
+    }
+
+    function showCalendarNotice(message) {
+        let notice = document.getElementById('calendar-notice');
+        if (!notice) {
+            notice = document.createElement('div');
+            notice.id = 'calendar-notice';
+            notice.className = 'calendar-toast';
+            document.body.appendChild(notice);
+        }
+
+        notice.textContent = message;
+        notice.classList.add('show');
+        clearTimeout(window.calendarNoticeTimer);
+        window.calendarNoticeTimer = setTimeout(() => {
+            notice.classList.remove('show');
+        }, 3000);
     }
 
 
@@ -422,7 +663,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadFacilitators() {
         const modalList = document.getElementById('facilitators-list');
         const mainList = document.getElementById('main-facilitators-list');
-        
+
         if (modalList) modalList.innerHTML = '<div class="loader-container">Fetching instructors...</div>';
         if (mainList) mainList.innerHTML = '<div class="loader-container">Fetching our faculty...</div>';
 
@@ -473,7 +714,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     `}
                 </div>
                 <strong class="fac-name-new">${f.name}</strong>
-                <span class="fac-subject-new">${f.expertise || 'Library Faculty'}</span>
+                <span class="fac-subject-new">${f.position || 'Library Faculty'}</span>
                 
                 <button class="btn-select-fac" onclick="handleShatterAndBook(this, ${f.id}, '${f.name}')">Select</button>
             `;
@@ -487,7 +728,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (mainList) {
             mainList.innerHTML = '';
             facilitators.forEach(f => mainList.appendChild(buildCard(f)));
-            
+
             // Add search listener
             const searchInput = document.getElementById('fac-directory-search');
             if (searchInput) {
@@ -838,11 +1079,15 @@ document.addEventListener('DOMContentLoaded', () => {
     let allFacilitators = [];
 
     let allTopics = [];
+    const modalFacList = document.getElementById('modal-instructor-list');
 
-    async function loadTopics() {
+    async function loadTopics(deptId = null) {
         if (!advTopicSelect) return;
         try {
-            const res = await fetch('api.php?action=get_topics');
+            let url = 'api.php?action=get_topics';
+            if (deptId) url += `&department_id=${deptId}`;
+            
+            const res = await fetch(url);
             const data = await res.json();
             if (data.success) {
                 allTopics = data.topics;
@@ -862,11 +1107,67 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load topics initially
     loadTopics();
 
+    function getDisclaimerDepartmentContext() {
+        const requesterDeptEl = document.getElementById('staff-req-dept');
+        if (requesterDeptEl && requesterDeptEl.value) {
+            const opt = requesterDeptEl.options[requesterDeptEl.selectedIndex];
+            return {
+                id: requesterDeptEl.value,
+                label: opt ? opt.text : 'the selected requester department'
+            };
+        }
+
+        if (currentUser && currentUser.department_id) {
+            return {
+                id: currentUser.department_id,
+                label: currentUser.department_name || 'your current department'
+            };
+        }
+
+        return null;
+    }
+
+    async function evaluateTopicDisclaimer(topicIdVal) {
+        const disclaimer = document.getElementById('topic-disclaimer');
+        if (!disclaimer) return;
+        disclaimer.style.display = 'none';
+
+        if (!topicIdVal) return;
+
+        const deptCtx = getDisclaimerDepartmentContext();
+        if (!deptCtx || !deptCtx.id) return;
+
+        try {
+            const res = await fetch(`api.php?action=get_topic_details&topic_id=${topicIdVal}`);
+            const tDetails = await res.json();
+            if (tDetails.success && tDetails.departments) {
+                const coversTargetDept = tDetails.departments.some(d => d.id == deptCtx.id);
+                if (!coversTargetDept) {
+                    disclaimer.querySelector('.disclaimer-text').textContent = `Your chosen topic isn't under ${deptCtx.label}. Change it if this is a mistake.`;
+                    disclaimer.style.display = 'flex';
+                }
+            }
+        } catch (e) { }
+    }
+
     if (advTopicSelect) {
         advTopicSelect.addEventListener('change', async (e) => {
             const topicIdVal = e.target.value;
+            const isInstructional = advBookingType && advBookingType.value === 'Instructional Program';
+            const hasDept = advDeptSelect && advDeptSelect.value;
 
-            const modalFacList = document.getElementById('modal-instructor-list');
+            if (isInstructional && (!hasDept || !topicIdVal)) {
+                if (modalFacList) {
+                    const helperText = !hasDept
+                        ? 'Select a department and topic to view facilitators.'
+                        : 'Select a topic to view facilitators.';
+                    modalFacList.innerHTML = `<div class="loader-container">${helperText}</div>`;
+                }
+                selectedFacId = null;
+                renderTimeAxisZones();
+                return;
+            }
+
             if (modalFacList) modalFacList.innerHTML = '<div class="loader-container">Syncing faculty...</div>';
 
             try {
@@ -878,14 +1179,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await res.json();
                 if (data.success) {
                     renderModalInstructors(data.facilitators);
-                } else {
-                    if (modalFacList) modalFacList.innerHTML = '<p>Error loading instructors.</p>';
                 }
-            } catch (err) {
-                if (modalFacList) modalFacList.innerHTML = '<p>Error loading instructors.</p>';
-            }
+            } catch (err) { }
+
+            await evaluateTopicDisclaimer(topicIdVal);
 
             selectedFacId = null;
+        });
+    }
+
+    const advDeptSelect = document.getElementById('adv-dept-select');
+    const staffReqDeptSelect = document.getElementById('staff-req-dept');
+    if (advDeptSelect) {
+        advDeptSelect.addEventListener('change', (e) => {
+            loadTopics(e.target.value);
+            selectedFacId = null;
+            if (modalFacList && advBookingType && advBookingType.value === 'Instructional Program') {
+                modalFacList.innerHTML = '<div class="loader-container">Select a topic to view facilitators.</div>';
+            }
+            const disclaimer = document.getElementById('topic-disclaimer');
+            if (disclaimer) disclaimer.style.display = 'none';
+            renderTimeAxisZones();
+        });
+    }
+
+    if (staffReqDeptSelect) {
+        staffReqDeptSelect.addEventListener('change', async () => {
+            if (!advTopicSelect || !advTopicSelect.value) return;
+            await evaluateTopicDisclaimer(advTopicSelect.value);
         });
     }
 
@@ -910,21 +1231,65 @@ document.addEventListener('DOMContentLoaded', () => {
         const topicSec = document.getElementById('topic-section');
         const instSec = document.getElementById('instructor-section');
         const timeSec = document.getElementById('time-selection-section');
+        const standardTimeInputs = document.getElementById('standard-time-inputs');
+        const wholeDayNotice = document.getElementById('whole-day-notice');
+        const timeAxisWrapper = document.querySelector('.time-axis-container');
+        const timeLabel = document.getElementById('time-label');
+        const durationHint = document.getElementById('time-duration-hint');
+        const errorEl = document.getElementById('time-error-msg');
 
         if (!topicSec || !instSec || !timeSec) return;
 
         if (type === 'Instructional Program') {
+            document.getElementById('dept-section').style.display = 'block';
             topicSec.style.display = 'block';
             instSec.style.display = 'block';
+            if (modalFacList) {
+                const hasDept = advDeptSelect && advDeptSelect.value;
+                const hasTopic = advTopicSelect && advTopicSelect.value;
+                if (!hasDept) {
+                    modalFacList.innerHTML = '<div class="loader-container">Select a department and topic to view facilitators.</div>';
+                } else if (!hasTopic) {
+                    modalFacList.innerHTML = '<div class="loader-container">Select a topic to view facilitators.</div>';
+                }
+            }
         } else {
+            document.getElementById('dept-section').style.display = 'none';
             topicSec.style.display = 'none';
             instSec.style.display = 'none';
+            selectedFacId = null;
+            if (modalFacList) modalFacList.innerHTML = '';
+            renderTimeAxisZones();
         }
 
-        // Show time selection when a type is picked
         if (type) {
             timeSec.style.display = 'block';
-            validateBookingTime();
+
+            if (type === 'Seminar') {
+                // Seminar = whole day, hide time inputs
+                if (standardTimeInputs) standardTimeInputs.style.display = 'none';
+                if (timeAxisWrapper) timeAxisWrapper.style.display = 'none';
+                if (wholeDayNotice) wholeDayNotice.style.display = 'flex';
+                if (timeLabel) timeLabel.textContent = 'Time:';
+                if (durationHint) durationHint.textContent = '';
+                if (errorEl) { errorEl.textContent = ''; errorEl.style.display = 'none'; }
+                // Set hidden time values to full day for the API
+                const st = document.getElementById('booking-start-time');
+                const et = document.getElementById('booking-end-time');
+                if (st) st.value = '09:00';
+                if (et) et.value = '20:00';
+            } else {
+                // Standard types (Instructional / Orientation)
+                if (standardTimeInputs) standardTimeInputs.style.display = 'block';
+                if (timeAxisWrapper) timeAxisWrapper.style.display = 'block';
+                if (wholeDayNotice) wholeDayNotice.style.display = 'none';
+                if (timeLabel) timeLabel.textContent = 'Pick a Time:';
+                // Update hint based on type
+                if (durationHint) {
+                    durationHint.textContent = 'Minimum 30 minutes · Maximum 4 hours';
+                }
+                validateBookingTime();
+            }
         } else {
             timeSec.style.display = 'none';
         }
@@ -933,52 +1298,82 @@ document.addEventListener('DOMContentLoaded', () => {
     function validateBookingTime() {
         if (!advBookingType) return true;
         const type = advBookingType.value;
+
+        // Seminars are always whole-day — skip validation
+        if (type === 'Seminar') return true;
+
         const startObj = bookingStartTime;
         const endObj = bookingEndTime;
         const errorEl = document.getElementById('time-error-msg');
 
         if (!errorEl || !startObj || !endObj) return true;
 
+        // Clear error immediately if either field is empty
         if (!startObj.value || !endObj.value) {
+            errorEl.textContent = '';
             errorEl.style.display = 'none';
             return true;
         }
 
-        const startStr = startObj.value;
-        const endStr = endObj.value;
-
-        const [h1, m1] = startStr.split(':').map(Number);
-        const [h2, m2] = endStr.split(':').map(Number);
-
+        const [h1, m1] = startObj.value.split(':').map(Number);
+        const [h2, m2] = endObj.value.split(':').map(Number);
         const startMins = h1 * 60 + m1;
         const endMins = h2 * 60 + m2;
-
         const diff = endMins - startMins;
 
-        errorEl.style.display = 'none';
-
-        if (diff <= 0) {
-            errorEl.innerHTML = '<svg style="width:14px;height:14px;display:inline;margin-right:4px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>End time must be after start time.';
+        // 9 AM (540) to 8 PM (1200)
+        if (startMins < 540 || endMins > 1200) {
+            errorEl.textContent = 'Time selection is limited from 9:00 AM to 8:00 PM.';
             errorEl.style.display = 'block';
             return false;
-        } else if (type === 'Instructional Program') {
-            if (diff < 30) {
-                errorEl.innerHTML = '<svg style="width:14px;height:14px;display:inline;margin-right:4px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>Instructional programs must be at least 30 minutes.';
-                errorEl.style.display = 'block';
-                return false;
-            } else if (diff > 240) {
-                errorEl.innerHTML = '<svg style="width:14px;height:14px;display:inline;margin-right:4px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>Instructional programs cannot exceed 4 hours.';
+        }
+
+        // Must not be in the past (today only)
+        const now = new Date();
+        if (selectedDate === formatLocalDate(now)) {
+            const currentMins = now.getHours() * 60 + now.getMinutes();
+            if (startMins < currentMins + 5) {
+                errorEl.textContent = 'You cannot book an appointment for a time that has already passed.';
                 errorEl.style.display = 'block';
                 return false;
             }
         }
+
+        if (endMins <= startMins) {
+            errorEl.textContent = 'End time must be after start time.';
+            errorEl.style.display = 'block';
+            return false;
+        }
+
+        // Duration limits for Instructional Program and Orientation
+        if (type === 'Instructional Program' || type === 'Orientation') {
+            if (diff < 30) {
+                errorEl.textContent = `${type}s must be at least 30 minutes.`;
+                errorEl.style.display = 'block';
+                return false;
+            }
+            if (diff > 240) {
+                errorEl.textContent = `${type}s cannot exceed 4 hours.`;
+                errorEl.style.display = 'block';
+                return false;
+            }
+        }
+
+        // All good — clear any previous error
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
         return true;
     }
 
     function openAdvancedBooking(date, preSelectFacId = null) {
         const dateObj = new Date(date);
+        if (dateObj.getDay() === 0) {
+            alert('Library bookings are closed on Sundays. Please choose another date.');
+            return;
+        }
+
         const formattedDate = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-        
+
         const dateDisplay = document.getElementById('booking-date-display');
         if (dateDisplay) dateDisplay.textContent = formattedDate;
 
@@ -996,12 +1391,50 @@ document.addEventListener('DOMContentLoaded', () => {
         if (endTime) endTime.value = '';
 
         const errorEl = document.getElementById('time-error-msg');
-        if (errorEl) errorEl.style.display = 'none';
+        if (errorEl) { errorEl.textContent = ''; errorEl.style.display = 'none'; }
 
-        if (advTopicSelect) advTopicSelect.value = '';
+        // Reset seminar / standard time UI state
+        const wholeDayNotice = document.getElementById('whole-day-notice');
+        const standardTimeInputs = document.getElementById('standard-time-inputs');
+        const timeAxisWrapper = document.querySelector('.time-axis-container');
+        const durationHint = document.getElementById('time-duration-hint');
+        if (wholeDayNotice) wholeDayNotice.style.display = 'none';
+        if (standardTimeInputs) standardTimeInputs.style.display = 'block';
+        if (timeAxisWrapper) timeAxisWrapper.style.display = 'block';
+        if (durationHint) durationHint.textContent = '';
+
+        const reqDeptSelect = document.getElementById('staff-req-dept');
+        if (reqDeptSelect) {
+            reqDeptSelect.innerHTML = '<option value="" disabled selected>Select department...</option>';
+            allDepartments.forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.id;
+                opt.textContent = d.name;
+                reqDeptSelect.appendChild(opt);
+            });
+        }
+
+        if (advDeptSelect) {
+            advDeptSelect.innerHTML = '<option value="" disabled selected>Select a department...</option>';
+            allDepartments.forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.id;
+                opt.textContent = d.name;
+                advDeptSelect.appendChild(opt);
+            });
+            advDeptSelect.value = '';
+        }
+
+        if (advTopicSelect) {
+            advTopicSelect.innerHTML = '<option value="" disabled selected>Select a department first...</option>';
+            advTopicSelect.value = '';
+        }
+
+        const disclaimer = document.getElementById('topic-disclaimer');
+        if (disclaimer) disclaimer.style.display = 'none';
 
         loadModalInstructors();
-        renderTimeAxisZones(); 
+        renderTimeAxisZones();
         advBookingModal.classList.add('active');
 
         // Ensure UI state is updated
@@ -1028,16 +1461,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 2. Instructor Bookings
         if (selectedFacId) {
-            const bookings = allSessions.filter(s => 
-                s.facilitator_id == selectedFacId && 
+            const bookings = allSessions.filter(s =>
+                s.facilitator_id == selectedFacId &&
                 s.date_time.startsWith(selectedDate) &&
-                s.booking_status !== 'Cancelled'
+                s.booking_status === 'CONFIRMED'
             );
-            
+
             bookings.forEach(b => {
                 const bDate = new Date(b.date_time);
                 const sH = bDate.getHours() + (bDate.getMinutes() / 60);
-                
+
                 // Estimate end time if missing (default 1h)
                 let eH = sH + 1;
                 if (b.end_time) {
@@ -1063,13 +1496,28 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e <= startH || s >= startH + totalH) return;
             const left = Math.max(0, ((s - startH) / totalH) * 100);
             const width = Math.min(100 - left, ((e - s) / totalH) * 100);
-            
+
             if (width <= 0) return;
 
             const zone = document.createElement('div');
             zone.className = `axis-zone ${className}`;
             zone.style.left = `${left}%`;
             zone.style.width = `${width}%`;
+            
+            // Format time for tooltip
+            const formatHour = (h) => {
+                const hour = Math.floor(h);
+                const mins = Math.round((h - hour) * 60);
+                const ampm = hour >= 12 ? 'PM' : 'AM';
+                const displayH = hour % 12 || 12;
+                return `${displayH}:${String(mins).padStart(2, '0')} ${ampm}`;
+            };
+
+            const sLabel = formatHour(s);
+            const eLabel = formatHour(e);
+            const typeLabel = className === 'zone-lunch' ? 'Lunch Break' : (className === 'zone-booked' ? 'Already Booked' : 'Your Selection');
+            zone.title = `${typeLabel}: ${sLabel} - ${eLabel}`;
+            
             container.appendChild(zone);
         }
     }
@@ -1082,10 +1530,26 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    const modalFacList = document.getElementById('modal-instructor-list');
-
     async function loadModalInstructors() {
         if (!modalFacList) return;
+
+        if (!advBookingType || advBookingType.value !== 'Instructional Program') {
+            modalFacList.innerHTML = '';
+            return;
+        }
+
+        const hasDept = advDeptSelect && advDeptSelect.value;
+        const hasTopic = advTopicSelect && advTopicSelect.value;
+
+        if (!hasDept) {
+            modalFacList.innerHTML = '<div class="loader-container">Select a department and topic to view facilitators.</div>';
+            return;
+        }
+
+        if (!hasTopic) {
+            modalFacList.innerHTML = '<div class="loader-container">Select a topic to view facilitators.</div>';
+            return;
+        }
 
         // Trigger the change event to fetch initial instructors based on selected topic
         if (advTopicSelect) {
@@ -1095,6 +1559,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderModalInstructors(facilitators) {
         modalFacList.innerHTML = '';
+        if (!facilitators || facilitators.length === 0) {
+            modalFacList.innerHTML = '<div class="loader-container">No facilitators available for the selected topic.</div>';
+            return;
+        }
+
         facilitators.forEach(f => {
             const div = document.createElement('div');
             div.className = 'fac-card-new';
@@ -1104,7 +1573,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div class="fac-info-new">
                     <h5>${f.name}</h5>
-                    <p>${f.expertise || 'Library Faculty'}</p>
+                    <p>${f.position || 'Library Faculty'}</p>
                 </div>
             `;
 
@@ -1143,6 +1612,12 @@ document.addEventListener('DOMContentLoaded', () => {
         advBookingForm.addEventListener('submit', async (e) => {
             e.preventDefault();
 
+            const selectedDateObj = parseLocalDate(selectedDate);
+            if (selectedDateObj.getDay() === 0) {
+                alert('Library bookings are closed on Sundays. Please choose another date.');
+                return;
+            }
+
             const type = document.getElementById('adv-booking-type').value;
             const startTime = document.getElementById('booking-start-time').value;
             const endTime = document.getElementById('booking-end-time').value;
@@ -1152,7 +1627,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            if (!startTime || !endTime) {
+            // For Seminars, times are auto-set to full-day — skip manual time check
+            if (type !== 'Seminar' && (!startTime || !endTime)) {
                 alert('Please select both start and end times.');
                 return;
             }
@@ -1180,19 +1656,43 @@ document.addEventListener('DOMContentLoaded', () => {
                 finalTopic = (advTopicSelect && advTopicSelect.value) ? advTopicSelect.options[advTopicSelect.selectedIndex].text : 'Library Consultation';
             }
 
+            const customRequestor = {};
+            const reqName = document.getElementById('staff-req-name')?.value?.trim();
+            const reqEmail = document.getElementById('staff-req-email')?.value?.trim();
+            const reqDept = document.getElementById('staff-req-dept');
+            const isFacilitator = !!(currentUser && currentUser.facilitator_id);
+
+            if (isFacilitator) {
+                if (!reqName || !reqEmail || !(reqDept && reqDept.value)) {
+                    alert('As a facilitator, requester name, email, and department are required.');
+                    btn.textContent = orig;
+                    btn.disabled = false;
+                    return;
+                }
+            }
+            
+            if (reqName || reqEmail || (reqDept && reqDept.value)) {
+                customRequestor.name = reqName;
+                customRequestor.email = reqEmail;
+                customRequestor.dept_id = reqDept.value;
+                customRequestor.dept_name = reqDept.options[reqDept.selectedIndex]?.text;
+            }
+
             const payload = {
                 type: type,
                 topic: finalTopic,
                 name: document.getElementById('book-name').value,
                 email: document.getElementById('book-email').value,
                 phone: document.getElementById('book-phone').value,
+                department: (currentUser && currentUser.department_id) ? currentUser.department_id : '',
                 notes: document.getElementById('book-notes').value,
                 reminder: document.getElementById('book-reminder').value,
                 mode: mode,
                 facilitator_id: finalFacId,
                 date: selectedDate,
                 date_time: `${selectedDate} ${startTime}:00`,
-                end_time: `${selectedDate} ${endTime}:00`
+                end_time: `${selectedDate} ${endTime}:00`,
+                custom_requestor: Object.keys(customRequestor).length > 0 ? customRequestor : null
             };
 
             try {
@@ -1227,6 +1727,62 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    let appointmentsCache = [];
+    let appointmentsSubview = 'active';
+
+    const CLOSED_APPOINTMENT_STATUSES = new Set(['CANCELLED', 'DECLINED']);
+    const COMPLETED_APPOINTMENT_STATUS = 'COMPLETED';
+
+    function isCancelledOrDeclinedStatus(status) {
+        return CLOSED_APPOINTMENT_STATUSES.has(String(status || '').trim().toUpperCase());
+    }
+
+    function isCompletedStatus(status) {
+        return String(status || '').trim().toUpperCase() === COMPLETED_APPOINTMENT_STATUS;
+    }
+
+    function getClosedStatusLabel(status) {
+        return String(status || '').trim().toUpperCase() === 'DECLINED' ? 'Declined' : 'Cancelled';
+    }
+
+    function setAppointmentsSubview(view) {
+        if (view === 'cancelled' || view === 'completed') {
+            appointmentsSubview = view;
+        } else {
+            appointmentsSubview = 'active';
+        }
+
+        const subtabButtons = document.querySelectorAll('.appointment-subtab-btn');
+        subtabButtons.forEach(btn => {
+            const isActive = btn.getAttribute('data-view') === appointmentsSubview;
+            btn.classList.toggle('active', isActive);
+            btn.classList.toggle('btn-primary', isActive);
+            btn.classList.toggle('btn-outline', !isActive);
+        });
+
+        renderAppointments(appointmentsCache);
+    }
+
+    function initAppointmentsSubtabs() {
+        const activeBtn = document.getElementById('appointments-subtab-active');
+        const cancelledBtn = document.getElementById('appointments-subtab-cancelled');
+        const completedBtn = document.getElementById('appointments-subtab-completed');
+
+        if (activeBtn) {
+            activeBtn.addEventListener('click', () => setAppointmentsSubview('active'));
+        }
+
+        if (cancelledBtn) {
+            cancelledBtn.addEventListener('click', () => setAppointmentsSubview('cancelled'));
+        }
+
+        if (completedBtn) {
+            completedBtn.addEventListener('click', () => setAppointmentsSubview('completed'));
+        }
+    }
+
+    initAppointmentsSubtabs();
+
     async function loadAppointments() {
         const grid = document.getElementById('my-appointments-grid');
         if (!grid) return;
@@ -1247,7 +1803,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
 
             if (data.success) {
-                renderAppointments(data.appointments);
+                appointmentsCache = Array.isArray(data.appointments) ? data.appointments : [];
+                renderAppointments(appointmentsCache);
             } else {
                 grid.innerHTML = '<p>Failed to load appointments.</p>';
             }
@@ -1259,16 +1816,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderAppointments(apps) {
         const grid = document.getElementById('my-appointments-grid');
-        if (apps.length === 0) {
-            grid.innerHTML = '<div class="loader-container">No appointments found.</div>';
+        const allApps = Array.isArray(apps) ? apps : [];
+        const filteredApps = allApps.filter(app => {
+            const normalizedStatus = String(app.booking_status || '').trim().toUpperCase();
+            if (appointmentsSubview === 'cancelled') {
+                return isCancelledOrDeclinedStatus(normalizedStatus);
+            } else if (appointmentsSubview === 'completed') {
+                return isCompletedStatus(normalizedStatus);
+            } else {
+                return !isCancelledOrDeclinedStatus(normalizedStatus) && !isCompletedStatus(normalizedStatus);
+            }
+        });
+
+        if (filteredApps.length === 0) {
+            const emptyText = appointmentsSubview === 'cancelled'
+                ? 'No cancelled/declined appointments found.'
+                : appointmentsSubview === 'completed'
+                ? 'No completed appointments found.'
+                : 'No appointments found.';
+            grid.innerHTML = `<div class="loader-container">${emptyText}</div>`;
             return;
         }
 
         grid.innerHTML = '';
-        apps.forEach(app => {
+        filteredApps.forEach(app => {
             const dateObj = new Date(app.date_time.replace(/-/g, '/'));
             const dateStr = !isNaN(dateObj) ? dateObj.toLocaleDateString() : app.date_time.split(' ')[0];
             const timeStr = !isNaN(dateObj) ? dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : app.date_time.split(' ')[1];
+            const normalizedStatus = String(app.booking_status).trim().toUpperCase();
+            const isClosed = isCancelledOrDeclinedStatus(normalizedStatus);
+            const cancelledByText = String(app.cancelled_by || '').trim();
+            const cancelledByAdmin = cancelledByText !== '' && /admin/i.test(cancelledByText);
+            const lockedByStudentCancellation = normalizedStatus === 'CANCELLED' && !cancelledByAdmin;
 
             let endTimeStr = 'N/A';
             if (app.end_time) {
@@ -1279,6 +1858,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const card = document.createElement('div');
             card.className = 'session-card';
 
+            const isFacilitatorBooking = currentUser && currentUser.facilitator_id && app.facilitator_id == currentUser.facilitator_id;
+            const isOwnBooking = currentUser && app.student_name && app.student_name === currentUser.name;
+
             let html = `
                 <div class="session-info">
                     <h4>${app.appointment_type || 'Consultation'} ${app.topic && app.topic !== app.appointment_type ? `- ${app.topic}` : ''}</h4>
@@ -1287,39 +1869,67 @@ document.addEventListener('DOMContentLoaded', () => {
                     <p style="margin-bottom: 0.5rem"><strong>Status:</strong> ${app.booking_status}</p>
             `;
 
+            if (isFacilitatorBooking && !isOwnBooking) {
+                html += `<p style="margin-bottom: 0.5rem"><strong>Role:</strong> Assigned Facilitator</p>`;
+            }
+
             if (isFacilitatorAuthenticated) {
                 html += `
                     <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px dashed var(--border);">
                         <strong>Admin Controls:</strong>
+                        ${isClosed ? `
+                            <div style="margin-top: 0.65rem; margin-bottom: 0.75rem; padding: 0.7rem; background: #fef2f2; border-left: 3px solid var(--danger); border-radius: 4px;">
+                                ${app.cancelled_date_time ? `<p style="margin: 0 0 0.35rem 0; font-size: 0.85rem; color: #64748b;"><strong>${getClosedStatusLabel(normalizedStatus)} on:</strong> ${new Date(app.cancelled_date_time).toLocaleString()}</p>` : ''}
+                                ${cancelledByText ? `<p style="margin: 0 0 0.35rem 0; font-size: 0.85rem; color: #64748b;"><strong>${getClosedStatusLabel(normalizedStatus)} by:</strong> ${cancelledByText}</p>` : ''}
+                                <p style="margin: 0; font-size: 0.85rem; color: #64748b;"><strong>Reason:</strong> ${app.cancellation_reason ? app.cancellation_reason : 'No reason provided'}</p>
+                            </div>
+                        ` : ''}
+                        ${lockedByStudentCancellation ? `<p style="margin: 0.35rem 0 0.75rem 0; font-size: 0.82rem; color: #9a3412; background: #fff7ed; border-left: 3px solid #f97316; padding: 0.55rem 0.7rem; border-radius: 4px;">This appointment was cancelled by a student and is read-only.</p>` : ''}
                         <div class="form-group" style="margin-top: 0.5rem;">
                             <label>Status</label>
-                            <select id="status-${app.booking_id}" class="login-input">
+                            <select id="status-${app.session_id}" class="login-input" ${lockedByStudentCancellation ? 'disabled' : ''}>
                                 <option value="PENDING" ${app.booking_status === 'PENDING' ? 'selected' : ''}>Pending</option>
                                 <option value="CONFIRMED" ${app.booking_status === 'CONFIRMED' ? 'selected' : ''}>Confirmed</option>
-                                <option value="Cancelled" ${app.booking_status === 'Cancelled' ? 'selected' : ''}>Cancelled</option>
+                                <option value="COMPLETED" ${app.booking_status === 'COMPLETED' ? 'selected' : ''}>Completed</option>
+                                <option value="CANCELLED" ${String(app.booking_status).toUpperCase() === 'CANCELLED' ? 'selected' : ''}>CANCELLED</option>
+                                <option value="DECLINED" ${String(app.booking_status).toUpperCase() === 'DECLINED' ? 'selected' : ''}>DECLINED</option>
                             </select>
                         </div>
                         <div class="form-group">
                             <label>Venue</label>
-                            <input type="text" id="venue-${app.booking_id}" class="login-input" value="${app.venue || 'TBA'}">
+                            <input type="text" id="venue-${app.session_id}" class="login-input" value="${app.venue || 'TBA'}" ${lockedByStudentCancellation ? 'disabled' : ''}>
                         </div>
                         <div class="form-group">
                             <label>Facilitator</label>
-                            <select id="fac-${app.booking_id}" class="login-input">
+                            <select id="fac-${app.session_id}" class="login-input" ${lockedByStudentCancellation ? 'disabled' : ''}>
                                 <option value="null">TBA</option>
                                 ${(allFacilitators || []).map(f => `<option value="${f.id}" ${app.facilitator_id == f.id ? 'selected' : ''}>${f.name}</option>`).join('')}
                             </select>
                         </div>
-                        <button class="btn btn-primary btn-sm" onclick="saveAppointmentAdmin(${app.booking_id})" style="width: 100%; margin-top: 0.5rem;">Save Changes</button>
+                        <button class="btn btn-primary btn-sm" onclick="saveAppointmentAdmin(${app.session_id})" style="width: 100%; margin-top: 0.5rem; ${lockedByStudentCancellation ? 'opacity: 0.6; cursor: not-allowed;' : ''}" ${lockedByStudentCancellation ? 'disabled' : ''}>Save Changes</button>
                     </div>
                 `;
             } else {
                 html += `
                     <p style="margin-bottom: 0.5rem"><strong>Venue:</strong> ${app.venue || 'TBA'}</p>
                     <p style="margin-bottom: 0.5rem"><strong>Instructor:</strong> ${app.facilitator_name || 'TBA'}</p>
+                    ${normalizedStatus === 'COMPLETED' ? `
+                        <div style="margin-top: 1rem; padding: 0.75rem; background: #f0fdf4; border-left: 3px solid #22c55e; border-radius: 4px;">
+                            <p style="margin: 0 0 0.5rem 0; color: #22c55e; font-weight: 600;">✓ Completed</p>
+                            ${app.evaluation_notes ? `<p style="margin: 0; font-size: 0.85rem; color: #64748b;"><strong>Notes:</strong> ${app.evaluation_notes}</p>` : ''}
+                        </div>
+                    ` : ''}
+                    ${isClosed ? `
+                        <div style="margin-top: 1rem; padding: 0.75rem; background: #fef2f2; border-left: 3px solid var(--danger); border-radius: 4px;">
+                            <p style="margin: 0 0 0.5rem 0; color: var(--danger); font-weight: 600;">${getClosedStatusLabel(normalizedStatus)}</p>
+                            ${app.cancelled_date_time ? `<p style="margin: 0 0 0.5rem 0; font-size: 0.85rem; color: #64748b;">${getClosedStatusLabel(normalizedStatus)} on ${new Date(app.cancelled_date_time).toLocaleString()}</p>` : ''}
+                            ${app.cancelled_by ? `<p style="margin: 0 0 0.5rem 0; font-size: 0.85rem; color: #64748b;"><strong>By:</strong> ${app.cancelled_by}</p>` : ''}
+                            ${app.cancellation_reason ? `<p style="margin: 0; font-size: 0.85rem; color: #64748b;"><strong>Reason:</strong> ${app.cancellation_reason}</p>` : ''}
+                        </div>
+                    ` : ''}
                     <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
-                        ${app.booking_status !== 'Cancelled' ? `<button class="btn btn-outline btn-sm" onclick="cancelAppointmentUser(${app.booking_id})" style="color: var(--danger); border-color: var(--danger);">Cancel</button>` : ''}
-                        ${app.appointment_type === 'Instructional Program' && app.facilitator_id && app.booking_status !== 'Cancelled' ? `<button class="btn btn-muted btn-sm" onclick="changeInstructor(${app.booking_id})">Change Instructor</button>` : ''}
+                        ${!isClosed && normalizedStatus !== 'COMPLETED' ? `<button class="btn btn-outline btn-sm" onclick="cancelAppointmentUser(${app.session_id})" style="color: var(--danger); border-color: var(--danger);">Cancel</button>` : ''}
+                        ${app.appointment_type === 'Instructional Program' && app.facilitator_id && !isClosed && normalizedStatus !== 'COMPLETED' ? `<button class="btn btn-muted btn-sm" onclick="changeInstructor(${app.session_id}, '${String(app.topic || '').replace(/'/g, "\\'")}', ${app.facilitator_id || 'null'})">Change Instructor</button>` : ''}
                     </div>
                 `;
             }
@@ -1331,14 +1941,40 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.saveAppointmentAdmin = async (bookingId) => {
+        const statusEl = document.getElementById(`status-${bookingId}`);
+        if (!statusEl || statusEl.disabled) return;
+
         const st = document.getElementById(`status-${bookingId}`).value;
         const vn = document.getElementById(`venue-${bookingId}`).value;
         const fc = document.getElementById(`fac-${bookingId}`).value;
+        let cancellationReason = null;
+        let cancelledBy = null;
+        let evaluationNotes = null;
+
+        const normalizedStatus = String(st).trim().toUpperCase();
+        if (normalizedStatus === 'COMPLETED') {
+            const modalResult = await promptCompletionEvaluation();
+            if (modalResult === null) return;
+            evaluationNotes = modalResult.message;
+        } else if (normalizedStatus === 'CANCELLED' || normalizedStatus === 'DECLINED') {
+            const actionWord = normalizedStatus === 'DECLINED' ? 'declined' : 'cancelled';
+            const reasonInput = await openCancellationReasonModal({
+                title: normalizedStatus === 'DECLINED' ? 'Decline This Appointment?' : 'Cancel This Appointment?',
+                message: `This appointment will be marked as ${actionWord.toUpperCase()}. You may optionally include a reason.`,
+                confirmText: normalizedStatus === 'DECLINED' ? 'Yes, Decline Appointment' : 'Yes, Cancel Appointment',
+                cancelText: 'Go Back',
+                reasonLabel: normalizedStatus === 'DECLINED' ? 'Decline reason (optional)' : 'Cancellation reason (optional)',
+                reasonPlaceholder: normalizedStatus === 'DECLINED' ? 'Type a reason for declining, or leave blank to continue...' : 'Type a reason for cancellation, or leave blank to continue...'
+            });
+            if (reasonInput === null) return;
+            cancellationReason = reasonInput;
+            cancelledBy = currentUser ? currentUser.name : 'Admin';
+        }
 
         try {
             const res = await fetch('api.php?action=update_appointment', {
                 method: 'POST',
-                body: JSON.stringify({ id: bookingId, status: st, venue: vn, facilitator_id: fc })
+                body: JSON.stringify({ id: bookingId, status: st, venue: vn, facilitator_id: fc, cancellation_reason: cancellationReason, cancelled_by: cancelledBy, evaluation_notes: evaluationNotes })
             });
             const data = await res.json();
             if (data.success) {
@@ -1352,11 +1988,20 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     window.cancelAppointmentUser = async (bookingId) => {
-        if (!confirm('Are you sure you want to cancel this appointment?')) return;
+        const reasonInput = await openCancellationReasonModal({
+            title: 'Cancel Appointment?',
+            message: 'You can tell us why you are cancelling, or leave it blank and continue.',
+            confirmText: 'Confirm Cancellation',
+            cancelText: 'Keep Appointment'
+        });
+        if (reasonInput === null) return;
+
+        const cancelledBy = currentUser ? currentUser.name : 'User';
+
         try {
             const res = await fetch('api.php?action=cancel_appointment', {
                 method: 'POST',
-                body: JSON.stringify({ id: bookingId })
+                body: JSON.stringify({ id: bookingId, cancellation_reason: reasonInput, cancelled_by: cancelledBy })
             });
             const data = await res.json();
             if (data.success) {
@@ -1366,12 +2011,50 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) { }
     };
 
-    window.changeInstructor = async (bookingId) => {
-        if (!confirm('This will move the appointment back to Pending status until an Admin assigns a new instructor. Continue?')) return;
+    window.changeInstructor = async (bookingId, topicName, currentFacilitatorId = null) => {
+        let topicId = null;
+
+        try {
+            if (!allTopics || !allTopics.length) {
+                const topicsRes = await fetch('api.php?action=get_topics');
+                const topicsData = await topicsRes.json();
+                if (topicsData.success && Array.isArray(topicsData.topics)) {
+                    allTopics = topicsData.topics;
+                }
+            }
+
+            const match = (allTopics || []).find(t =>
+                String(t.name || '').trim().toLowerCase() === String(topicName || '').trim().toLowerCase()
+            );
+            topicId = match ? match.id : null;
+        } catch (e) { }
+
+        if (!topicId) {
+            alert('No facilitator list found for this topic.');
+            return;
+        }
+
+        let facilitators = [];
+        try {
+            const resF = await fetch(`api.php?action=get_facilitators&topic_id=${topicId}`);
+            const dataF = await resF.json();
+            if (dataF.success && Array.isArray(dataF.facilitators)) {
+                facilitators = dataF.facilitators;
+            }
+        } catch (e) { }
+
+        if (!facilitators.length) {
+            alert('No available facilitators found for this topic.');
+            return;
+        }
+
+        const selectedFacilitatorId = await openChangeInstructorModal(facilitators, currentFacilitatorId);
+        if (!selectedFacilitatorId) return;
+
         try {
             const res = await fetch('api.php?action=change_instructor', {
                 method: 'POST',
-                body: JSON.stringify({ id: bookingId })
+                body: JSON.stringify({ id: bookingId, facilitator_id: selectedFacilitatorId })
             });
             const data = await res.json();
             if (data.success) {
@@ -1383,8 +2066,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateTodayTimeline() {
         const timelineTrack = document.getElementById('today-timeline-track');
         const eventsContainer = document.getElementById('timeline-events-container');
-        const clockDisplay = document.getElementById('timeline-clock');
-        const nowIndicator = document.getElementById('timeline-now-indicator');
+        const dateDisplay = document.getElementById('timeline-date');
+        const confirmedBars = document.getElementById('timeline-confirmed-bars');
 
         if (!timelineTrack || !eventsContainer) return;
 
@@ -1393,13 +2076,33 @@ document.addEventListener('DOMContentLoaded', () => {
         const day = now.getDay();
         let startHour, startMin, endHour, endMin;
 
+        const dateStr = now.toLocaleDateString([], {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+        if (dateDisplay) dateDisplay.textContent = dateStr;
+
+        const axisLabels = document.querySelector('.timeline-axis');
+        const ticksContainer = document.querySelector('.timeline-ticks');
+
+        if (day === 0) {
+            if (axisLabels) {
+                axisLabels.innerHTML = '<span class="axis-label" style="left: 50%; transform: translateX(-50%);">Closed on Sunday</span>';
+            }
+            if (ticksContainer) ticksContainer.innerHTML = '';
+            eventsContainer.innerHTML = '';
+            if (confirmedBars) {
+                confirmedBars.innerHTML = '<div class="timeline-empty">Library is closed today (Sunday).</div>';
+            }
+            return;
+        }
+
         if (day >= 1 && day <= 5) { // Mon-Fri
             startHour = 7; startMin = 30;
             endHour = 19; endMin = 0;
-        } else if (day === 6) { // Sat
-            startHour = 8; startMin = 0;
-            endHour = 17; endMin = 0;
-        } else { // Sun (or default)
+        } else { // Weekend (Sat/Sun)
             startHour = 8; startMin = 0;
             endHour = 17; endMin = 0;
         }
@@ -1408,17 +2111,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const endMins = endHour * 60 + endMin;
         const totalMinutes = endMins - startMins;
 
-        // Update Axis Labels
-        const axisLabels = document.querySelector('.timeline-axis');
+        // Update Axis Labels Programmatically
         if (axisLabels) {
-            const startStr = day >= 1 && day <= 5 ? "7:30 AM" : "8 AM";
-            const midStr = day >= 1 && day <= 5 ? "1 PM" : "12 PM";
-            const endStr = day >= 1 && day <= 5 ? "7 PM" : "5 PM";
-            axisLabels.innerHTML = `<span class="axis-label">${startStr}</span><span class="axis-label">${midStr}</span><span class="axis-label">${endStr}</span>`;
+            const startStr = day >= 1 && day <= 5 ? "7:30 AM" : "8:00 AM";
+            const midStr = day >= 1 && day <= 5 ? "1:00 PM" : "12:00 PM";
+            const endStr = day >= 1 && day <= 5 ? "7:00 PM" : "5:00 PM";
+            
+            const midMins = day >= 1 && day <= 5 ? 13 * 60 : 12 * 60;
+            const midPos = ((midMins - startMins) / totalMinutes) * 100;
+            
+            axisLabels.innerHTML = `
+                <span class="axis-label" style="left: 0;">${startStr}</span>
+                <span class="axis-label" style="left: ${midPos}%; transform: translateX(-50%);">${midStr}</span>
+                <span class="axis-label" style="left: 100%; transform: translateX(-100%);">${endStr}</span>
+            `;
         }
 
         // Generate Ticks
-        const ticksContainer = document.querySelector('.timeline-ticks');
         if (ticksContainer) {
             ticksContainer.innerHTML = '';
             const hoursCount = Math.ceil(totalMinutes / 60);
@@ -1429,51 +2138,169 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // Current time for the clock
-        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        if (clockDisplay) clockDisplay.textContent = timeStr;
-
-        // Position "now" indicator
-        const currentMins = now.getHours() * 60 + now.getMinutes();
-
-        if (currentMins >= startMins && currentMins <= endMins) {
-            const posPct = ((currentMins - startMins) / totalMinutes) * 100;
-            nowIndicator.style.left = `${posPct}%`;
-            nowIndicator.style.display = 'block';
-        } else {
-            nowIndicator.style.display = 'none';
-        }
-
         // Filter sessions for today
-        const todayStr = now.toISOString().split('T')[0];
-        const todaySessions = allSessions.filter(s => 
-            s.date_time.startsWith(todayStr) && s.booking_status !== 'Cancelled'
+        const todayStr = formatLocalDate(now);
+        const todaySessions = allSessions.filter(s =>
+            s.date_time.startsWith(todayStr) && s.booking_status === 'CONFIRMED'
         );
+        todaySessions.sort((a, b) => new Date(a.date_time) - new Date(b.date_time));
 
         eventsContainer.innerHTML = '';
+
+        // Add Lunch Break Zone (12PM - 1PM)
+        const lunchStart = 12 * 60;
+        const lunchEnd = 13 * 60;
+        const lPos = ((lunchStart - startMins) / totalMinutes) * 100;
+        const lWidth = ((lunchEnd - lunchStart) / totalMinutes) * 100;
+        
+        if (lPos + lWidth > 0 && lPos < 100) {
+            const lunchZone = document.createElement('div');
+            lunchZone.className = 'timeline-lunch-zone';
+            lunchZone.style.left = `${Math.max(0, lPos)}%`;
+            lunchZone.style.width = `${Math.min(100 - lPos, lWidth)}%`;
+            
+            const lTooltip = document.createElement('div');
+            lTooltip.className = 'timeline-tooltip';
+            lTooltip.innerHTML = '<strong>Lunch Break</strong><br>12:00 PM - 1:00 PM';
+            lunchZone.appendChild(lTooltip);
+            
+            lunchZone.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isActive = lunchZone.classList.contains('active');
+                document.querySelectorAll('.timeline-lunch-zone, .timeline-session-span, .timeline-event-marker').forEach(m => m.classList.remove('active'));
+                if (!isActive) lunchZone.classList.add('active');
+            });
+            eventsContainer.appendChild(lunchZone);
+        }
+
         todaySessions.forEach(s => {
             const sDate = new Date(s.date_time);
-            const sMins = sDate.getHours() * 60 + sDate.getMinutes();
+            const eDate = s.end_time ? new Date(s.end_time) : new Date(sDate.getTime() + 60 * 60 * 1000);
             
-            if (sMins >= startMins && sMins <= endMins) {
-                const posPct = ((sMins - startMins) / totalMinutes) * 100;
-                const marker = document.createElement('div');
-                marker.className = `timeline-event-marker ${s.booking_status === 'BOOKED' ? 'booked' : ''}`;
-                marker.style.left = `${posPct}%`;
+            const sMins = sDate.getHours() * 60 + sDate.getMinutes();
+            const eMins = eDate.getHours() * 60 + eDate.getMinutes();
+
+            if (sMins < endMins && eMins > startMins) {
+                const leftPos = Math.max(0, ((sMins - startMins) / totalMinutes) * 100);
+                const rightPos = Math.min(100, ((eMins - startMins) / totalMinutes) * 100);
+                const widthPct = rightPos - leftPos;
+
+                const span = document.createElement('div');
+                span.className = `timeline-session-span booked`;
+                span.style.left = `${leftPos}%`;
+                span.style.width = `${Math.max(widthPct, 1)}%`;
+
+                const timeRange = `${sDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${eDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
                 
                 const tooltip = document.createElement('div');
                 tooltip.className = 'timeline-tooltip';
-                tooltip.innerHTML = `<strong>${s.topic}</strong><br>${sDate.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}<br>${s.facilitator_name || 'TBA'}`;
+                tooltip.innerHTML = `<strong>${s.topic}</strong><br>${timeRange}<br>${s.facilitator_name || 'TBA'}`;
+
+                span.appendChild(tooltip);
                 
-                marker.appendChild(tooltip);
-                eventsContainer.appendChild(marker);
+                span.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const isActive = span.classList.contains('active');
+                    document.querySelectorAll('.timeline-lunch-zone, .timeline-session-span, .timeline-event-marker').forEach(m => m.classList.remove('active'));
+                    if (!isActive) span.classList.add('active');
+                });
+
+                eventsContainer.appendChild(span);
             }
         });
-    }
 
-    // Refresh timeline periodically
-    setInterval(updateTodayTimeline, 60000);
+        if (confirmedBars) {
+            confirmedBars.innerHTML = '';
+
+            if (todaySessions.length === 0) {
+                confirmedBars.innerHTML = '<div class="timeline-empty">No confirmed appointments for today.</div>';
+            } else {
+                todaySessions.forEach(s => {
+                    const sDate = new Date(s.date_time);
+                    const eDate = s.end_time ? new Date(s.end_time) : new Date(sDate.getTime() + 60 * 60 * 1000);
+
+                    const sMins = sDate.getHours() * 60 + sDate.getMinutes();
+                    const eMins = eDate.getHours() * 60 + eDate.getMinutes();
+                    if (sMins >= endMins || eMins <= startMins) return;
+
+                    const leftPos = Math.max(0, ((sMins - startMins) / totalMinutes) * 100);
+                    const rightPos = Math.min(100, ((eMins - startMins) / totalMinutes) * 100);
+                    const widthPct = Math.max(rightPos - leftPos, 1);
+
+                    const timeRange = `${sDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${eDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+                    const row = document.createElement('div');
+                    row.className = 'timeline-confirmed-row';
+                    row.innerHTML = `
+                        <div class="timeline-confirmed-meta">
+                            <strong>${s.topic}</strong>
+                            <span>${timeRange}</span>
+                        </div>
+                        <div class="timeline-confirmed-track">
+                            <div class="timeline-confirmed-bar" style="left:${leftPos}%; width:${widthPct}%;" title="${s.topic} • ${timeRange} • ${s.facilitator_name || 'TBA'}"></div>
+                        </div>
+                    `;
+                    confirmedBars.appendChild(row);
+                });
+
+                if (!confirmedBars.children.length) {
+                    confirmedBars.innerHTML = '<div class="timeline-empty">No confirmed appointments within today\'s timeline window.</div>';
+                }
+            }
+        }
+
+        // Global click to clear tooltips
+        if (!window.timelineGlobalClickAttached) {
+            document.addEventListener('click', () => {
+                document.querySelectorAll('.timeline-lunch-zone, .timeline-session-span, .timeline-event-marker').forEach(m => m.classList.remove('active'));
+            });
+            window.timelineGlobalClickAttached = true;
+        }
+    }
 
     // Initial load
     updateCalendar(true);
+
+    async function loadFacilitatorSessions() {
+        const grid = document.getElementById('my-sessions-grid');
+        if (!grid || !currentUser || !currentUser.facilitator_id) return;
+
+        grid.innerHTML = '<div class="loader-container">Fetching your sessions...</div>';
+
+        try {
+            const res = await fetch(`api.php?action=get_facilitator_sessions&facilitator_id=${currentUser.facilitator_id}`);
+            const data = await res.json();
+            if (data.success) {
+                if (data.sessions.length === 0) {
+                    grid.innerHTML = '<div class="loader-container" style="opacity: 0.5;">No confirmed sessions assigned to you yet.</div>';
+                    return;
+                }
+                grid.innerHTML = '';
+                data.sessions.forEach(s => {
+                    const card = document.createElement('div');
+                    card.className = 'session-card';
+                    const dt = new Date(s.date_time.replace(/-/g, '/'));
+                    const timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    
+                    card.innerHTML = `
+                        <div class="session-top">
+                            <span class="session-type">${s.type}</span>
+                            <span class="session-status" style="background: #ecfdf5; color: #059669;">CONFIRMED</span>
+                        </div>
+                        <h4>${s.topic}</h4>
+                        <div class="session-meta">
+                            <span>📅 ${dt.toLocaleDateString()} at ${timeStr}</span>
+                            <span>📍 ${s.venue || 'TBA'} (${s.mode})</span>
+                        </div>
+                        <div class="session-student-info" style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #eee; font-size: 0.8rem;">
+                            <p><strong>Requestor:</strong> ${s.requestor_name}</p>
+                            <p style="color: #64748b;">${s.requestor_email} | ${s.department_name || 'N/A'}</p>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                });
+            }
+        } catch (e) {
+            grid.innerHTML = '<p>Error loading sessions.</p>';
+        }
+    }
 });

@@ -1,5 +1,5 @@
-<div class="modal-overlay" id="seminar-modal">
-    <div class="modal-content" style="max-width: 500px;">
+<div class="modal-overlay admin-modal" id="seminar-modal">
+    <div class="modal-content admin-modal-card admin-modal-md">
         <div class="modal-header">
             <h3>Add New Institutional Seminar</h3>
             <button class="btn-close" onclick="this.closest('.modal-overlay').classList.remove('active')">&times;</button>
@@ -26,7 +26,7 @@
                     <label>Brief Description</label>
                     <textarea id="sem-desc" class="form-control" rows="3"></textarea>
                 </div>
-                <div style="margin-top: 1.5rem; display: flex; gap: 1rem;">
+                <div class="admin-modal-footer">
                     <button type="submit" class="btn btn-primary" style="flex: 1;">Publish Seminar</button>
                 </div>
             </form>

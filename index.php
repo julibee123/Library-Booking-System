@@ -1,18 +1,33 @@
 <?php
 session_start();
 
+if (empty($_SESSION['user_id'])) {
+    header('Location: login.php');
+    exit;
+}
+
+require_once __DIR__ . '/packages/core/BookingService.php';
+$service = new BookingService();
+$currentUser = $service->getUserInfo((int) $_SESSION['user_id']);
+
+if (!$currentUser) {
+    session_unset();
+    session_destroy();
+    header('Location: login.php');
+    exit;
+}
+
 // Prevent Edge "Content unavailable. Resource was not cached" error
 header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
 header("Cache-Control: post-check=0, pre-check=0", false);
 header("Pragma: no-cache");
 header("X-Content-Type-Options: nosniff");
 
-// Authentication removed as per user request
-// Set default view identities
-$_SESSION['user_id'] = 1; 
-$firstName = "Guest";
-$studentInitials = "G";
-$studentEmail = "guest@datalib.local";
+$firstName = $currentUser['name'] ?? 'User';
+$studentInitials = strtoupper(substr(trim($firstName), 0, 1));
+$studentEmail = $currentUser['email'] ?? 'No email';
+$isFacilitator = !empty($currentUser['facilitator_id']);
+$isAdminUser = strtolower((string) ($currentUser['role'] ?? '')) === 'admin';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -39,6 +54,7 @@ $studentEmail = "guest@datalib.local";
             <div class="avatar-large"><?= htmlspecialchars($studentInitials) ?></div>
             <h3><?= htmlspecialchars($firstName) ?></h3>
             <p><?= htmlspecialchars($studentEmail) ?></p>
+            <a href="logout.php" class="btn btn-outline btn-sm" style="margin-top: 1rem; width: 100%; justify-content: center;">Sign Out</a>
         </div>
     </div>
 
@@ -56,6 +72,12 @@ $studentEmail = "guest@datalib.local";
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
                 Our Facilitators
             </button>
+            <?php if ($isFacilitator): ?>
+            <button class="tab-btn" data-tab="my-sessions" style="border-left: 2px solid #e2e8f0; margin-left: auto;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20"></path><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                My Sessions
+            </button>
+            <?php endif; ?>
         </div>
 
         <div class="tab-content">
@@ -102,20 +124,20 @@ $studentEmail = "guest@datalib.local";
                                 <div class="legend-item" style="font-size: 0.75rem; gap: 0.4rem; display: flex; align-items: center;"><span class="dot dot-booked" style="width: 8px; height: 8px; background: var(--danger); border-radius: 50%;"></span> Booked</div>
                                 <div class="legend-item" style="font-size: 0.75rem; gap: 0.4rem; display: flex; align-items: center;"><span class="dot dot-closed" style="width: 8px; height: 8px; background: #64748b; border-radius: 50%;"></span> Closed</div>
                                 <div class="legend-item" style="font-size: 0.75rem; gap: 0.4rem; display: flex; align-items: center;"><span class="tag" style="font-size: 0.65rem; background: #f3e8ff; color: #9333ea; padding: 2px 4px; border-radius: 3px; border: 1px solid #e9d5ff;">Seminar</span> Institutional Seminar</div>
-                            </div>
+                              </div>
                         </div>
 
                         <!-- Today's Schedule Timeline -->
                         <div class="timeline-card">
                             <div class="timeline-header">
                                 <h3>Today's Schedule Timeline</h3>
-                                <span class="current-time-pill" id="timeline-clock">00:00 AM</span>
+                                <span class="current-date-pill" id="timeline-date">Friday, April 17, 2026</span>
                             </div>
                             <div class="timeline-container">
                                 <div class="timeline-axis">
-                                    <span class="axis-label">8 AM</span>
-                                    <span class="axis-label">12 PM</span>
-                                    <span class="axis-label">5 PM</span>
+                                    <span class="axis-label" style="left: 0;">8 AM</span>
+                                    <span class="axis-label" style="left: 44.44%; transform: translateX(-50%);">12 PM</span>
+                                    <span class="axis-label" style="left: 100%; transform: translateX(-100%);">5 PM</span>
                                 </div>
                                 <div class="timeline-track" id="today-timeline-track">
                                     <div class="timeline-line"></div>
@@ -128,7 +150,12 @@ $studentEmail = "guest@datalib.local";
                                     <div id="timeline-events-container">
                                         <!-- Events placed here via JS -->
                                     </div>
-                                    <div class="current-time-indicator" id="timeline-now-indicator"></div>
+                                </div>
+                                <div class="timeline-confirmed-section" id="timeline-confirmed-section">
+                                    <div class="timeline-confirmed-label">Confirmed Appointments</div>
+                                    <div class="timeline-confirmed-bars" id="timeline-confirmed-bars">
+                                        <div class="timeline-empty">No confirmed appointments for today.</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -154,6 +181,12 @@ $studentEmail = "guest@datalib.local";
                 <div class="section-title">
                     <h3>My Scheduled Appointments</h3>
                     <p style="color: var(--text-secondary); margin-top: 0.5rem;">Manage and view your upcoming library sessions.</p>
+                </div>
+
+                <div class="appointments-subtabs" style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                    <button type="button" id="appointments-subtab-active" class="btn btn-primary btn-sm appointment-subtab-btn active" data-view="active">My Appointments</button>
+                    <button type="button" id="appointments-subtab-cancelled" class="btn btn-outline btn-sm appointment-subtab-btn" data-view="cancelled">Cancelled/Declined Appointments</button>
+                    <button type="button" id="appointments-subtab-completed" class="btn btn-outline btn-sm appointment-subtab-btn" data-view="completed">Completed Appointments</button>
                 </div>
                 
                 <div id="my-appointments-grid" class="sessions-grid" style="margin-top: 2rem;">
@@ -191,6 +224,20 @@ $studentEmail = "guest@datalib.local";
                     <div class="loader-container">Fetching our faculty...</div>
                 </div>
             </div>
+
+            <!-- My Sessions (Facilitator Role) -->
+            <?php if ($isFacilitator): ?>
+            <div class="tab-pane" id="my-sessions-pane">
+                <div class="section-title">
+                    <h3>Confirmed Sessions for My Facilitation</h3>
+                    <p style="color: var(--text-secondary); margin-top: 0.5rem;">Manage and view sessions where you are the primary instructor.</p>
+                </div>
+                
+                <div id="my-sessions-grid" class="sessions-grid" style="margin-top: 2rem;">
+                    <div class="loader-container">Fetching your sessions...</div>
+                </div>
+            </div>
+            <?php endif; ?>
         </div>
     </main>
 
@@ -208,6 +255,12 @@ $studentEmail = "guest@datalib.local";
             <button class="btn btn-primary" id="btn-close-success" style="margin-top: 1.5rem;">Close</button>
         </div>
     </div>
+
+    <!-- Cancellation Reason Modal -->
+    <?php include 'components/cancel_reason_modal.php'; ?>
+
+    <!-- Change Instructor Modal -->
+    <?php include 'components/change_instructor_modal.php'; ?>
 
     <!-- Advanced Booking Modal -->
     <?php include 'components/booking_modal.php'; ?>

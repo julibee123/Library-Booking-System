@@ -15,6 +15,36 @@ $readonlyAttr = $isStudent ? 'readonly style="background-color: #e2e8f0; cursor:
         <input type="hidden" id="book-phone" value="<?= htmlspecialchars($studentPhone ?? '') ?>">
         
         <form id="advanced-booking-form" class="booking-flow">
+            <?php 
+            $userRole = $_SESSION['user_role'] ?? 'Student';
+            $isStaffOrAdmin = in_array(strtolower($userRole), ['staff', 'admin']);
+            ?>
+
+            <!-- NEW: Requestor Details for Staff/Admin -->
+            <div id="staff-requestor-section" style="display: <?= $isStaffOrAdmin ? 'block' : 'none' ?>; background: #f8fafc; padding: 1rem; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 1.5rem;">
+                <h4 style="margin-bottom: 0.8rem; font-size: 0.9rem; color: #1e293b; display: flex; align-items: center; gap: 0.5rem;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+                    Booking for another requestor
+                </h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem;">
+                    <div>
+                        <label class="label-new" style="font-size: 0.75rem;">Requestor Name</label>
+                        <input type="text" id="staff-req-name" class="input-new" placeholder="Full Name">
+                    </div>
+                    <div>
+                        <label class="label-new" style="font-size: 0.75rem;">Requestor Email</label>
+                        <input type="email" id="staff-req-email" class="input-new" placeholder="email@example.com">
+                    </div>
+                </div>
+                <div style="margin-top: 0.8rem;">
+                    <label class="label-new" style="font-size: 0.75rem;">Requestor Department</label>
+                    <select id="staff-req-dept" class="select-new">
+                        <option value="" disabled selected>Select department...</option>
+                        <!-- Populated via JS -->
+                    </select>
+                </div>
+                <p style="font-size: 0.65rem; color: #64748b; margin-top: 0.5rem;">For facilitator accounts, these requester fields are required.</p>
+            </div>
             <!-- 1. Booking Type -->
             <div class="booking-section">
                 <label for="adv-booking-type" class="label-new">Pick a booking type ("Instructional Program", "Seminar", "Orientation")</label>
@@ -25,13 +55,25 @@ $readonlyAttr = $isStudent ? 'readonly style="background-color: #e2e8f0; cursor:
                     <option value="Seminar">Seminar</option>
                 </select>
             </div>
+            
+            <!-- 1.5 Department (Instructional Only) -->
+            <div class="booking-section" id="dept-section" style="display: none;">
+                <label for="adv-dept-select" class="label-new">Pick a Department</label>
+                <select id="adv-dept-select" class="select-new">
+                    <option value="" disabled selected>Select a department...</option>
+                </select>
+            </div>
 
-            <!-- 2. Topic -->
             <div class="booking-section" id="topic-section" style="display: none;">
                 <label for="adv-topic-select" class="label-new">Pick a Topic</label>
                 <select id="adv-topic-select" class="select-new">
                     <option value="" disabled selected>Select a topic...</option>
                 </select>
+                <!-- Disclaimer box -->
+                <div id="topic-disclaimer" class="disclaimer-alert" style="display: none;">
+                    <div class="disclaimer-icon">⚠️</div>
+                    <div class="disclaimer-text">Your chosen topic isn't under your current department. Change it if this is a mistake, if not, proceed.</div>
+                </div>
             </div>
 
             <!-- 3. Facilitator -->
@@ -45,11 +87,13 @@ $readonlyAttr = $isStudent ? 'readonly style="background-color: #e2e8f0; cursor:
 
             <!-- 4. Time Selection -->
             <div class="booking-section" id="time-selection-section" style="display: none;">
-                <label class="label-new">Pick a Time:</label>
+                <label class="label-new" id="time-label">Pick a Time:</label>
                 <div class="time-axis-container">
-                    <div class="time-axis-labels" id="axis-labels-new">
-                        <!-- Ticks 9AM to 8PM -->
-                        <span>9:00 AM</span><span>12:00 PM</span><span>3:00 PM</span><span>8:00 PM</span>
+                    <div class="time-axis-labels" id="axis-labels-new" style="position: relative; height: 1.5rem; display: block;">
+                        <span style="position: absolute; left: 0;">9:00 AM</span>
+                        <span style="position: absolute; left: 27.27%; transform: translateX(-50%);">12:00 PM</span>
+                        <span style="position: absolute; left: 54.54%; transform: translateX(-50%);">3:00 PM</span>
+                        <span style="position: absolute; left: 100%; transform: translateX(-100%);">8:00 PM</span>
                     </div>
                     <div class="time-axis-track">
                         <div class="axis-line-new"></div>
@@ -75,7 +119,9 @@ $readonlyAttr = $isStudent ? 'readonly style="background-color: #e2e8f0; cursor:
                             <span class="ln-text">Instructor Already Booked</span>
                         </div>
                     </div>
-                    
+
+                <!-- Standard time inputs (Instructional / Orientation) -->
+                <div id="standard-time-inputs">
                     <div class="time-inputs-row">
                         <div class="time-input-group">
                             <label for="booking-start-time">Start</label>
@@ -86,7 +132,19 @@ $readonlyAttr = $isStudent ? 'readonly style="background-color: #e2e8f0; cursor:
                             <input type="time" id="booking-end-time" class="input-mini">
                         </div>
                     </div>
-                    <p id="time-error-msg" class="error-text-new"></p>
+                    <p id="time-duration-hint" style="font-size: 0.72rem; color: #64748b; text-align: center; margin-top: 0.5rem;"></p>
+                </div>
+
+                <!-- Whole Day notice for Seminars -->
+                <div id="whole-day-notice" style="display: none; margin-top: 1rem; background: #eff6ff; border: 1px solid #bfdbfe; border-left: 4px solid #3b82f6; border-radius: 6px; padding: 0.9rem 1rem; gap: 0.75rem; align-items: flex-start;">
+                    <span style="font-size: 1.3rem; flex-shrink: 0;">&#128197;</span>
+                    <div>
+                        <strong style="font-size: 0.85rem; color: #1e3a5f;">Whole Day Event</strong>
+                        <p style="font-size: 0.78rem; color: #2563eb; margin: 0.2rem 0 0;">Seminars occupy the full day from <strong>9:00 AM to 8:00 PM</strong>. No specific time slot is required.</p>
+                    </div>
+                </div>
+
+                <p id="time-error-msg" class="error-text-new" style="margin-top: 0.5rem;"></p>
                 </div>
             </div>
 
@@ -392,6 +450,35 @@ $readonlyAttr = $isStudent ? 'readonly style="background-color: #e2e8f0; cursor:
     transform: translateY(-50%);
     border-radius: 5px;
     opacity: 0.6;
+}
+
+.disclaimer-alert {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: #fff8eb;
+    border: 1px solid #ffe8cc;
+    border-left: 4px solid #f59e0b;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    animation: fadeInSlide 0.3s ease-out;
+}
+
+.disclaimer-icon {
+    font-size: 1.2rem;
+}
+
+.disclaimer-text {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #92400e;
+    line-height: 1.4;
+}
+
+@keyframes fadeInSlide {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .zone-selected { background: #10b981; border: 1.5px solid #059669; }
